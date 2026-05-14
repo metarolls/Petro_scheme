@@ -1,4 +1,4 @@
-import type { Coupon } from "@/data/dealer/mockCoupons";
+import type { Coupon } from "@/types/coupon";
 
 export const getWhatsAppShareUrl = (coupon: Coupon): string => {
   const message = `TMT Coupon Generated

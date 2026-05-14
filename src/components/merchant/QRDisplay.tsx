@@ -4,14 +4,16 @@ import { Fuel, MapPin, Phone } from "lucide-react";
 
 interface QRDisplayProps {
   pumpData: any;
+  amount?: string;
 }
 
-export function QRDisplay({ pumpData }: QRDisplayProps) {
+export function QRDisplay({ pumpData, amount }: QRDisplayProps) {
   const qrValue = JSON.stringify({
     pumpId: pumpData.pumpId,
     pumpName: pumpData.pumpName,
     location: pumpData.location,
-    merchantPhone: pumpData.ownerPhone
+    merchantPhone: pumpData.ownerPhone,
+    ...(amount && { amount })
   });
 
   return (

@@ -1,15 +1,53 @@
 import * as React from "react"
 import { useNavigate } from "react-router-dom"
-import { ChevronLeft, ArrowUpRight, ArrowDownLeft } from "lucide-react"
+import { ChevronLeft, ArrowUpRight, ArrowDownLeft, Loader2 } from "lucide-react"
 import { TransactionCard } from "@/components/contractor/TransactionCard"
 import { Card, CardContent } from "@/components/ui/card"
-import { getTransactions } from "@/lib/contractor/walletStorage"
 import { formatCurrency, cn } from "@/lib/utils"
+import { db } from "@/lib/firebase"
+import { collection, query, where, orderBy, onSnapshot } from "firebase/firestore"
 
 export function TransactionHistory() {
   const navigate = useNavigate()
   const [filter, setFilter] = React.useState<"All" | "Earned" | "Spent">("All")
-  const [transactions] = React.useState(getTransactions())
+  const [transactions, setTransactions] = React.useState<any[]>([])
+  const [loading, setLoading] = React.useState(true)
+
+  const contractorId = localStorage.getItem("contractorId")
+
+  React.useEffect(() => {
+    if (!contractorId) {
+      navigate("/contractor/login")
+      return
+    }
+
+    const q = query(
+      collection(db, "wallet_history"),
+      where("sourceId", "==", contractorId),
+      orderBy("timestamp", "desc")
+    )
+
+    const unsub = onSnapshot(q, (snap) => {
+      const txns = snap.docs.map(d => {
+        const data = d.data()
+        const isCredit = data.type === 'reward'
+        
+        return {
+          transactionId: d.id,
+          type: data.type === 'reward' ? 'Reward Earned' : 'Fuel Payment',
+          amount: data.amount,
+          direction: isCredit ? 'credit' : 'debit',
+          source: isCredit ? 'Metaroll Rewards' : data.destinationName,
+          status: data.status === 'completed' ? 'Success' : 'Pending',
+          createdAt: data.timestamp ? new Date(data.timestamp.toMillis()).toLocaleDateString() : 'Just now'
+        }
+      })
+      setTransactions(txns)
+      setLoading(false)
+    })
+
+    return () => unsub()
+  }, [contractorId, navigate])
 
   const filteredTransactions = React.useMemo(() => {
     return transactions.filter(t => {
@@ -28,7 +66,7 @@ export function TransactionHistory() {
     .reduce((acc, t) => acc + t.amount, 0)
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-6 space-y-6 animate-in fade-in slide-in-from-right-4 duration-300 pb-32">
       <div className="flex items-center space-x-4">
         <button onClick={() => navigate("/contractor/home")} className="p-2 bg-white rounded-full shadow-sm border border-slate-100">
           <ChevronLeft className="h-6 w-6 text-slate-900" />
@@ -61,11 +99,16 @@ export function TransactionHistory() {
 
       {/* List */}
       <div className="space-y-3">
-        {filteredTransactions.map((txn) => (
-          <TransactionCard key={txn.transactionId} transaction={txn} />
-        ))}
-        {filteredTransactions.length === 0 && (
+        {loading ? (
+          <div className="py-20 flex justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-brand" />
+          </div>
+        ) : filteredTransactions.length === 0 ? (
           <div className="py-20 text-center text-slate-400 font-bold">No transactions found</div>
+        ) : (
+          filteredTransactions.map((txn) => (
+            <TransactionCard key={txn.transactionId} transaction={txn} />
+          ))
         )}
       </div>
     </div>

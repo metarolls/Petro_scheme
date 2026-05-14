@@ -48,6 +48,20 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        brand: {
+          DEFAULT: "#FF2B45",
+          hover: "#E11D38",
+          soft: "#FFF1F3",
+          border: "#FFC7D0",
+        },
+        navy: {
+          DEFAULT: "#0F172A",
+          soft: "#F1F5F9",
+        },
+        success: "#16A34A",
+        warning: "#F59E0B",
+        info: "#0EA5E9",
+        error: "#DC2626",
       },
       borderRadius: {
         lg: "var(--radius)",

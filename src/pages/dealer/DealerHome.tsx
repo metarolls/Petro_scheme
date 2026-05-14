@@ -1,106 +1,185 @@
 import * as React from "react"
 import { useNavigate } from "react-router-dom"
-import { PlusSquare, History, TrendingUp, BarChart3, Wallet } from "lucide-react"
-import { StockCard } from "@/components/dealer/StockCard"
+import { History, TrendingUp, IndianRupee, ArrowRight, ShieldAlert } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
-import { mockDealer } from "@/data/dealer/mockDealer"
-import { mockCoupons } from "@/data/dealer/mockCoupons"
-import { formatCurrency } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { db } from "@/lib/firebase"
+import { 
+  onSnapshot, 
+  collection, 
+  query, 
+  where, 
+  orderBy
+} from "firebase/firestore"
+import { cn } from "@/lib/utils"
+import { useAuth } from "@/contexts/AuthContext"
 
 export function DealerHome() {
   const navigate = useNavigate()
-  const [stock, setStock] = React.useState(mockDealer.availableStockMT)
-  const [coupons, setCoupons] = React.useState(mockCoupons)
+  const { user, profile, loading: authLoading } = useAuth()
+  const [stats, setStats] = React.useState({
+    totalSales: 0,
+    todayTransactions: 0
+  })
+  const [loading, setLoading] = React.useState(true)
+
+  const dealerId = user?.uid
 
   React.useEffect(() => {
-    const savedStock = localStorage.getItem('dealerStock')
-    const savedCoupons = localStorage.getItem('dealerCoupons')
-    if (savedStock) setStock(parseFloat(savedStock))
-    if (savedCoupons) setCoupons(JSON.parse(savedCoupons))
-  }, [])
+    if (authLoading) return
+    if (!user) {
+      navigate('/dealer/login')
+      return
+    }
 
-  const todayCoupons = coupons.filter(c => {
-    const date = new Date(c.generatedAt).toDateString()
-    return date === new Date().toDateString()
-  }).length
+    if (!dealerId) return
 
-  const todaySoldKg = coupons.reduce((acc, c) => acc + c.weightKg, 0)
-  const totalReward = coupons.reduce((acc, c) => acc + c.rewardValue, 0)
+    // Listen to Wallet History for Stats
+    const q = query(
+      collection(db, "wallet_history"),
+      where("sourceId", "==", dealerId),
+      orderBy("timestamp", "desc")
+    )
+
+    const unsubHistory = onSnapshot(q, (snap) => {
+      const docs = snap.docs.map(d => d.data())
+      
+      const sales = docs
+        .filter(d => d.type === 'transfer')
+        .reduce((acc, d) => acc + (d.weightKg || 0), 0)
+      
+
+      const today = new Date().toDateString()
+      const todayCount = docs.filter(d => {
+        const dDate = d.timestamp?.toDate()?.toDateString()
+        return dDate === today
+      }).length
+
+      setStats({
+        totalSales: sales,
+        todayTransactions: todayCount
+      })
+      setLoading(false)
+    }, (error) => {
+      console.error("History Error:", error)
+      setLoading(false)
+    })
+
+    return () => {
+      unsubHistory()
+    }
+  }, [user, authLoading, dealerId, navigate])
+
+  if (authLoading || loading) {
+    return (
+      <div className="h-full flex items-center justify-center p-6">
+        <div className="animate-spin h-8 w-8 border-4 border-brand border-t-transparent rounded-full" />
+      </div>
+    )
+  }
+
+  const walletBalance = profile?.walletBalance || 0
 
   return (
     <div className="p-6 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex justify-between items-center mb-2">
-        <div>
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Dealer Dashboard</p>
-          <h1 className="text-xl font-black text-slate-900">{mockDealer.name}</h1>
+      
+      {/* Missing PIN Alert */}
+      {!profile?.walletPIN && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-[2rem] flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-500 shadow-sm mb-2">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-amber-500 rounded-2xl shadow-lg shadow-amber-200/50">
+              <ShieldAlert className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-amber-900 leading-tight">Action Required: Please set your 4-digit Transaction PIN in Settings to enable wallet operations.</p>
+              <p className="text-[10px] text-amber-700 font-bold uppercase tracking-[0.2em] mt-1">Security setup missing • सुरक्षा पिन आवश्यक आहे</p>
+            </div>
+          </div>
+          <Button 
+            onClick={() => navigate("/settings")}
+            className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl h-11 shadow-lg shadow-amber-200 transition-all active:scale-95"
+          >
+            Set PIN Now
+          </Button>
         </div>
-        <div className="h-10 w-10 bg-white rounded-full flex items-center justify-center shadow-sm border border-slate-100">
-          <BarChart3 className="h-5 w-5 text-blue-600" />
-        </div>
-      </div>
+      )}
 
-      <StockCard stockMT={stock} />
+      {/* Wallet Balance Card */}
+      <Card className="bg-navy border-none glass-3d overflow-hidden relative rounded-[2.5rem]">
+        <div className="absolute top-0 right-0 w-32 h-32 bg-brand/10 rounded-full -mr-16 -mt-16 blur-2xl" />
+        <CardContent className="p-8 text-center relative z-10">
+          <p className="text-white/50 text-xs font-bold uppercase tracking-widest mb-2">Available Wallet Balance</p>
+          <h2 className="text-5xl font-black text-white tracking-tight flex items-center justify-center gap-2">
+            <span className="text-brand text-3xl">₹</span>
+            {walletBalance.toLocaleString()}
+          </h2>
+          <p className="text-brand font-medium text-[10px] uppercase mt-2 tracking-tighter">वॉलेट शिल्लक (इंधन खरेदीसाठी)</p>
+        </CardContent>
+      </Card>
 
-      {/* Main Action Button */}
+      {/* Main Action Button - Pay for Fuel */}
       <button 
-        onClick={() => navigate("/dealer/generate")}
-        className="w-full bg-blue-600 active:bg-blue-800 text-white rounded-3xl p-8 flex flex-col items-center justify-center space-y-3 shadow-xl shadow-blue-200 transition-all active:scale-[0.98]"
+        onClick={() => navigate("/dealer/transfer")}
+        className="group w-full bg-brand active:bg-brand-hover text-white rounded-[2.5rem] p-10 flex flex-col items-center justify-center space-y-4 shadow-xl shadow-brand/20 transition-all active:scale-[0.98] pwa-tap-highlight border border-white/20 relative overflow-hidden"
       >
-        <div className="bg-white/20 p-3 rounded-2xl">
-          <PlusSquare className="h-10 w-10" />
+        <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent opacity-50" />
+        <div className="bg-white/20 p-5 rounded-[1.5rem] group-hover:scale-110 transition-transform shadow-inner relative z-10">
+          <IndianRupee className="h-10 w-10" />
         </div>
-        <div className="text-center">
-          <span className="block text-xl font-black uppercase tracking-tight">Generate New Coupon</span>
-          <span className="text-blue-100 text-xs font-medium">नवीन कूपन तयार करा</span>
+        <div className="text-center relative z-10">
+          <span className="block text-2xl font-black uppercase tracking-tight">Pay for Fuel</span>
+          <span className="text-white/70 text-xs font-black uppercase tracking-widest mt-1 block">इंधन पेमेंट करा</span>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] font-black text-white/50 uppercase tracking-widest relative z-10">
+          <span>Instant Settlement</span>
+          <ArrowRight className="h-3 w-3 group-hover:translate-x-1 transition-transform" />
         </div>
       </button>
 
       {/* Quick Stats Grid */}
       <div className="grid grid-cols-2 gap-4">
         <StatItem 
-          label="Today Coupons" 
-          value={todayCoupons.toString()} 
+          label="Total Sales Volume" 
+          value={`${stats.totalSales.toLocaleString()} Kg`} 
           icon={TrendingUp} 
-          color="bg-emerald-50 text-emerald-600" 
-        />
-        <StatItem 
-          label="Today Sold Kg" 
-          value={`${todaySoldKg} Kg`} 
-          icon={BarChart3} 
-          color="bg-purple-50 text-purple-600" 
-        />
-        <StatItem 
-          label="Total Reward" 
-          value={formatCurrency(totalReward)} 
-          icon={Wallet} 
-          color="bg-amber-50 text-amber-600" 
+          color="bg-emerald-500/10 text-emerald-500" 
           className="col-span-2"
+        />
+        <StatItem 
+          label="Today's Activity" 
+          value={`${stats.todayTransactions} Txns`} 
+          icon={History} 
+          color="bg-info/10 text-info" 
+          className="col-span-2"
+          onClick={() => navigate("/dealer/history")}
         />
       </div>
 
       <button 
         onClick={() => navigate("/dealer/history")}
-        className="w-full py-4 text-slate-500 text-sm font-bold flex items-center justify-center space-x-2 bg-slate-100 rounded-2xl active:bg-slate-200 transition-colors"
+        className="w-full py-5 text-slate-500 text-xs font-black uppercase tracking-widest flex items-center justify-center space-x-2 bg-slate-100 rounded-2xl active:bg-slate-200 transition-colors pwa-tap-highlight"
       >
         <History className="h-4 w-4" />
-        <span>View Stock History</span>
+        <span>View Full Transaction History</span>
       </button>
     </div>
   )
 }
 
-function StatItem({ label, value, icon: Icon, color, className }: any) {
+function StatItem({ label, value, icon: Icon, color, className, onClick }: any) {
   return (
-    <Card className={cn("border-none shadow-sm", className)}>
-      <CardContent className="p-4 flex flex-col items-center text-center">
-        <div className={cn("p-2 rounded-xl mb-2", color)}>
-          <Icon className="h-5 w-5" />
+    <Card 
+      className={cn("border-none glass-3d shadow-sm cursor-pointer active:scale-[0.98] transition-all pwa-tap-highlight", className)}
+      onClick={onClick}
+    >
+      <CardContent className="p-5 flex flex-col items-center text-center">
+        <div className={cn("p-3 rounded-2xl mb-3 shadow-inner", color)}>
+          <Icon className="h-6 w-6" />
         </div>
-        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">{label}</p>
-        <p className="text-lg font-black text-slate-900">{value}</p>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
+        <p className="text-lg font-black text-navy tracking-tight">{value}</p>
       </CardContent>
     </Card>
   )
 }
 
-import { cn } from "@/lib/utils"

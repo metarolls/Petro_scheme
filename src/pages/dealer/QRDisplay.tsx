@@ -1,27 +1,55 @@
 import * as React from "react"
 import { useNavigate, useParams } from "react-router-dom"
-import { ChevronLeft, Share2, PlusCircle, Home } from "lucide-react"
+import { ChevronLeft, Share2, PlusCircle, Home, Loader2 } from "lucide-react"
 import { QRCodeCanvas } from "qrcode.react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { StatusBadge } from "@/components/dealer/StatusBadge"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, formatFirestoreDate } from "@/lib/utils"
 import { getWhatsAppShareUrl } from "@/lib/dealer/whatsappShare"
-import type { Coupon } from "@/data/dealer/mockCoupons"
+import type { Coupon } from "@/types/coupon"
+import { db } from "@/lib/firebase"
+import { doc, onSnapshot } from "firebase/firestore"
 
 export function QRDisplay() {
   const navigate = useNavigate()
   const { couponId } = useParams()
   const [coupon, setCoupon] = React.useState<Coupon | null>(null)
+  const [loading, setLoading] = React.useState(true)
 
   React.useEffect(() => {
-    const savedCoupons = JSON.parse(localStorage.getItem('dealerCoupons') || '[]')
-    const found = savedCoupons.find((c: Coupon) => c.couponId === couponId)
-    setCoupon(found || null)
+    if (!couponId) return
+
+    const unsub = onSnapshot(doc(db, "coupons", couponId), (docSnap) => {
+      if (docSnap.exists()) {
+        setCoupon({ couponId: docSnap.id, ...docSnap.data() } as Coupon)
+      } else {
+        setCoupon(null)
+      }
+      setLoading(false)
+    })
+
+    return () => unsub()
   }, [couponId])
 
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    )
+  }
+
   if (!coupon) {
-    return <div className="p-10 text-center">Coupon not found</div>
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center space-y-4">
+        <div className="bg-red-50 p-4 rounded-full">
+          <ChevronLeft className="h-10 w-10 text-red-500" />
+        </div>
+        <h2 className="text-xl font-black text-slate-900">Coupon Not Found</h2>
+        <Button onClick={() => navigate("/dealer/home")}>Back to Home</Button>
+      </div>
+    )
   }
 
   const qrData = JSON.stringify({
@@ -29,7 +57,7 @@ export function QRDisplay() {
     dealerId: coupon.dealerId,
     weightKg: coupon.weightKg,
     rewardValue: coupon.rewardValue,
-    generatedAt: coupon.generatedAt
+    generatedAt: coupon.generatedAt || (coupon.createdAt ? new Date(coupon.createdAt.seconds * 1000).toISOString() : new Date().toISOString())
   })
 
   return (
@@ -73,7 +101,7 @@ export function QRDisplay() {
               </div>
               <div className="col-span-2 pt-2 border-t border-slate-50">
                 <p className="text-[10px] font-bold text-slate-400 uppercase">Generated On</p>
-                <p className="text-sm text-slate-600 font-medium">{coupon.generatedAt}</p>
+                <p className="text-sm text-slate-600 font-medium">{formatFirestoreDate(coupon.createdAt || coupon.generatedAt)}</p>
               </div>
             </div>
           </CardContent>

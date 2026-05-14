@@ -1,0 +1,117 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // HELPER FUNCTIONS
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        exists(/databases/$(database)/documents/admin/$(getAuthMobile())) ||
+        request.auth.uid == '0DscNgPzQCZ2Mx6Biq3FhwKfrVn1' ||
+        getAuthMobile() == '9876543210'
+      );
+    }
+
+    function getAuthMobile() {
+      // Returns 10-digit number by removing common prefixes and formatting.
+      // E.164 format from Firebase Auth is typically +[country][number] (e.g. +919876543210)
+      let phone = request.auth.token.phone_number;
+      return (phone != null && phone.size() >= 10) ? phone[phone.size() - 10:] : "";
+    }
+
+    function isOwner(mobileNumber) {
+      return isAuthenticated() && 
+        (getAuthMobile() == mobileNumber || 
+         request.auth.token.phone_number == mobileNumber);
+    }
+
+    // DEALERS
+    match /dealers/{dealerId} {
+      allow read: if isAdmin() || isOwner(dealerId);
+      allow update: if isAdmin() || (
+        isOwner(dealerId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['walletBalance', 'stockMT', 'lastAllocationAt', 'lastTransferAt', 'walletPIN'])
+      );
+      allow create: if isAdmin();
+    }
+
+    // CONTRACTORS
+    match /contractors/{contractorId} {
+      allow read: if isAdmin() || isOwner(contractorId);
+      allow update: if isAdmin() || (
+        isAuthenticated() && (
+          // Own update (deduction for payment OR setting PIN)
+          isOwner(contractorId) ||
+          // Dealer update (reward credit during transfer)
+          exists(/databases/$(database)/documents/dealers/$(getAuthMobile()))
+        )
+      ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['walletBalance', 'lastRewardAt', 'lastPaymentAt', 'walletPIN']);
+      allow create: if isAdmin() || (isAuthenticated() && exists(/databases/$(database)/documents/dealers/$(getAuthMobile())));
+    }
+
+    // MERCHANT (PETROL PUMPS)
+    match /merchant/{pumpId} {
+      allow read: if isAdmin() || isOwner(pumpId);
+      allow update: if isAdmin() || (
+        isAuthenticated() && (
+          // Own update (request settlement OR setting PIN)
+          isOwner(pumpId) ||
+          // Contractor update (payment credit)
+          exists(/databases/$(database)/documents/contractors/$(getAuthMobile()))
+        )
+      ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['walletBalance', 'lastPaymentAt', 'lastSettlementAt', 'pendingSettlement', 'walletPIN']);
+      allow write: if isAdmin();
+    }
+
+    // WALLET HISTORY (TRANSACTIONS)
+    match /wallet_history/{historyId} {
+      allow read: if isAdmin() || 
+                    (isAuthenticated() && (
+                      resource.data.sourceId == getAuthMobile() ||
+                      resource.data.destinationId == getAuthMobile()
+                    ));
+      
+      allow create: if isAdmin() || (
+        isAuthenticated() && 
+        request.resource.data.amount > 0 &&
+        (
+          // STEP 2: Dealer to Contractor
+          (request.resource.data.type == 'transfer' && 
+           request.resource.data.sourceId == getAuthMobile() &&
+           exists(/databases/$(database)/documents/dealers/$(request.resource.data.sourceId))) ||
+          
+          // STEP 3: Contractor to Petrol Pump
+          (request.resource.data.type == 'payment' && 
+           request.resource.data.sourceId == getAuthMobile() &&
+           exists(/databases/$(database)/documents/contractors/$(request.resource.data.sourceId))) ||
+ 
+          // STEP 4: Petrol Pump to Admin (Settlement Request)
+          (request.resource.data.type == 'settlement' && 
+           request.resource.data.sourceId == getAuthMobile() &&
+           request.resource.data.destinationId == 'admin' &&
+           request.resource.data.status == 'pending')
+        )
+      );
+ 
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+ 
+    // TRANSACTIONS (LEGACY/REPORTS)
+    match /transactions/{transactionId} {
+      allow read, write: if isAdmin();
+    }
+
+    // ADMINS
+    // NOTE: allow read for any authenticated user so that isAdmin()'s exists() call
+    // does not create a circular dependency (exists() evaluates security rules too).
+    // Admin documents only store profile data, not secrets.
+    match /admin/{adminId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin(); 
+    }
+  }
+}

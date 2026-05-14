@@ -1,11 +1,11 @@
 import { NavLink } from "react-router-dom";
-import { Home, PlusSquare, History } from "lucide-react";
+import { Home, History, IndianRupee } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function BottomNav() {
   const items = [
     { to: "/dealer/home", icon: Home, label: "Home" },
-    { to: "/dealer/generate", icon: PlusSquare, label: "Generate" },
+    { to: "/dealer/transfer", icon: IndianRupee, label: "Pay Fuel" },
     { to: "/dealer/history", icon: History, label: "History" },
   ];
 
@@ -18,7 +18,7 @@ export function BottomNav() {
           className={({ isActive }) => 
             cn(
               "flex flex-col items-center space-y-1 transition-colors",
-              isActive ? "text-blue-600" : "text-slate-400 hover:text-slate-600"
+              isActive ? "text-brand" : "text-slate-400 hover:text-slate-600"
             )
           }
         >

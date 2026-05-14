@@ -10,13 +10,13 @@ interface StatusBadgeProps {
 export function StatusBadge({ status, className }: StatusBadgeProps) {
   const variants: Record<CouponStatus, "success" | "default" | "secondary"> = {
     Active: "success",
-    Used: "default",
+    Claimed: "default",
     Expired: "secondary"
   };
 
   const statusMap: Record<CouponStatus, string> = {
     Active: "Active",
-    Used: "Used",
+    Claimed: "Used",
     Expired: "Expired"
   };
 

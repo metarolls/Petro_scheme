@@ -19,7 +19,7 @@ export function ContractorBottomNav() {
           className={({ isActive }) => 
             cn(
               "flex flex-col items-center space-y-1 transition-colors",
-              isActive ? "text-indigo-600" : "text-slate-400 hover:text-slate-600"
+              isActive ? "text-brand" : "text-slate-400 hover:text-slate-600"
             )
           }
         >

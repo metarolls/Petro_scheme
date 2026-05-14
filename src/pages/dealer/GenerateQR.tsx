@@ -1,29 +1,43 @@
 import * as React from "react"
 import { useNavigate } from "react-router-dom"
-import { ChevronLeft, Info, Cpu } from "lucide-react"
+import { ChevronLeft, Info, Cpu, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { mockDealer } from "@/data/dealer/mockDealer"
 import { calculateReward } from "@/lib/dealer/rewardCalculator"
 import { generateCoupon } from "@/lib/dealer/couponGenerator"
 import { toast } from "sonner"
 import { mtToKg } from "@/lib/dealer/rewardCalculator"
+import { db } from "@/lib/firebase"
+import { doc, runTransaction, onSnapshot, serverTimestamp } from "firebase/firestore"
 
 export function GenerateQR() {
   const navigate = useNavigate()
   const [weightKg, setWeightKg] = React.useState("")
-  const [stock, setStock] = React.useState(mockDealer.availableStockMT)
+  const [stock, setStock] = React.useState(0)
+  const [isGenerating, setIsGenerating] = React.useState(false)
+  
+  const dealerId = localStorage.getItem("dealerId")
 
   React.useEffect(() => {
-    const savedStock = localStorage.getItem('dealerStock')
-    if (savedStock) setStock(parseFloat(savedStock))
-  }, [])
+    if (!dealerId) {
+      navigate("/dealer/login")
+      return
+    }
+
+    const unsub = onSnapshot(doc(db, "dealers", dealerId), (docSnap) => {
+      if (docSnap.exists()) {
+        setStock(docSnap.data().availableStockMT || 0)
+      }
+    })
+
+    return () => unsub()
+  }, [dealerId, navigate])
 
   const availableKg = mtToKg(stock)
   const reward = weightKg ? calculateReward(parseFloat(weightKg)) : 0
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     const weightNum = parseFloat(weightKg)
     
     if (!weightKg || weightNum <= 0) {
@@ -36,19 +50,45 @@ export function GenerateQR() {
       return
     }
 
-    const newCoupon = generateCoupon(mockDealer.dealerId, weightNum)
-    
-    // Update local storage
-    const currentCoupons = localStorage.getItem('dealerCoupons') ? JSON.parse(localStorage.getItem('dealerCoupons')!) : []
-    const updatedCoupons = [newCoupon, ...currentCoupons]
-    
-    const newStock = stock - (weightNum / 1000)
-    
-    localStorage.setItem('dealerCoupons', JSON.stringify(updatedCoupons))
-    localStorage.setItem('dealerStock', newStock.toString())
+    if (!dealerId) return
 
-    toast.success("Coupon generated successfully!")
-    navigate(`/dealer/qr/${newCoupon.couponId}`)
+    setIsGenerating(true)
+    try {
+      const newCoupon = generateCoupon(dealerId, weightNum)
+      
+      await runTransaction(db, async (transaction) => {
+        const dealerRef = doc(db, "dealers", dealerId)
+        const dSnap = await transaction.get(dealerRef)
+        
+        if (!dSnap.exists()) throw new Error("Dealer not found")
+        
+        const currentStock = dSnap.data().availableStockMT || 0
+        const weightMT = weightNum / 1000
+        
+        if (currentStock < weightMT) throw new Error("Insufficient stock")
+        
+        // 1. Deduct Stock
+        transaction.update(dealerRef, { 
+          availableStockMT: currentStock - weightMT 
+        })
+        
+        // 2. Create Coupon Record
+        const couponRef = doc(db, "coupons", newCoupon.couponId)
+        transaction.set(couponRef, {
+          ...newCoupon,
+          createdAt: serverTimestamp(),
+          status: "Active"
+        })
+      })
+
+      toast.success("Coupon generated successfully!")
+      navigate(`/dealer/qr/${newCoupon.couponId}`)
+    } catch (error: any) {
+      console.error("Generation Error:", error)
+      toast.error(error.message || "Failed to generate coupon")
+    } finally {
+      setIsGenerating(false)
+    }
   }
 
   return (
@@ -95,10 +135,15 @@ export function GenerateQR() {
 
         <Button 
           onClick={handleGenerate}
-          className="w-full h-16 text-lg font-black bg-blue-600 hover:bg-blue-700 shadow-xl shadow-blue-100 rounded-3xl"
+          disabled={isGenerating}
+          className="w-full h-16 text-lg font-black bg-blue-600 hover:bg-blue-700 shadow-xl shadow-blue-100 rounded-3xl text-white"
         >
-          <Cpu className="h-6 w-6 mr-2" />
-          Generate QR Code
+          {isGenerating ? <Loader2 className="h-6 w-6 animate-spin" /> : (
+            <>
+              <Cpu className="h-6 w-6 mr-2" />
+              Generate QR Code
+            </>
+          )}
         </Button>
       </div>
     </div>

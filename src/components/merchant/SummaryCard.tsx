@@ -12,7 +12,7 @@ interface SummaryCardProps {
 export function SummaryCard({ totalAmount, totalTransactions, averageTransaction, highestTransaction }: SummaryCardProps) {
   return (
     <div className="space-y-4">
-      <Card className="bg-gradient-to-br from-emerald-600 to-teal-700 border-none shadow-xl shadow-emerald-100 rounded-[32px] overflow-hidden relative">
+      <Card className="bg-gradient-to-br from-brand to-brand-hover border-none shadow-xl shadow-brand/20 rounded-[32px] overflow-hidden relative">
         <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-2xl" />
         <CardContent className="p-8 text-white relative z-10">
           <div className="flex justify-between items-start mb-6">
@@ -57,7 +57,7 @@ export function SummaryCard({ totalAmount, totalTransactions, averageTransaction
             </div>
             <div>
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Diesel Today</p>
-              <p className="text-sm font-black text-slate-900">{formatCurrency(totalAmount)}</p>
+              <p className="text-sm font-black text-navy">{formatCurrency(totalAmount)}</p>
             </div>
           </CardContent>
         </Card>
@@ -68,7 +68,7 @@ export function SummaryCard({ totalAmount, totalTransactions, averageTransaction
             </div>
             <div>
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Wallet Payments</p>
-              <p className="text-sm font-black text-slate-900">{formatCurrency(totalAmount)}</p>
+              <p className="text-sm font-black text-navy">{formatCurrency(totalAmount)}</p>
             </div>
           </CardContent>
         </Card>

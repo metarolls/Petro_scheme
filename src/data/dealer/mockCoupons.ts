@@ -1,4 +1,4 @@
-export type CouponStatus = "Active" | "Used" | "Expired";
+export type CouponStatus = "Active" | "Claimed" | "Expired";
 
 export interface Coupon {
   couponId: string;
@@ -8,6 +8,8 @@ export interface Coupon {
   rewardValue: number;
   generatedAt: string;
   status: CouponStatus;
+  claimedBy?: string;
+  claimedAt?: any;
 }
 
 export const mockCoupons: Coupon[] = [
@@ -27,6 +29,6 @@ export const mockCoupons: Coupon[] = [
     weightMT: 0.75,
     rewardValue: 1500,
     generatedAt: "2026-05-04 03:15 PM",
-    status: "Used"
+    status: "Claimed"
   }
 ];

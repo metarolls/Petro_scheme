@@ -1,21 +1,27 @@
 import * as React from "react"
 import { useNavigate } from "react-router-dom"
-import { ChevronLeft, Fuel, ShieldCheck, Wallet, Info } from "lucide-react"
+import { ChevronLeft, Fuel, ShieldCheck, Wallet, Info, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { getWalletBalance, setWalletBalance, addTransaction } from "@/lib/contractor/walletStorage"
-import { generateTransaction } from "@/lib/contractor/transactionGenerator"
-import { mockContractor } from "@/data/contractor/mockContractor"
 import { formatCurrency } from "@/lib/utils"
 import { toast } from "sonner"
+import { db } from "@/lib/firebase"
+import { doc, runTransaction, collection, serverTimestamp, onSnapshot } from "firebase/firestore"
+import { useAuth } from "@/contexts/AuthContext"
 
 export function FuelPayment() {
   const navigate = useNavigate()
   const [amount, setAmount] = React.useState("")
   const [pin, setPin] = React.useState("")
-  const [balance] = React.useState(getWalletBalance())
+  const [balance, setBalance] = React.useState(0)
   const [pump, setPump] = React.useState<any>(null)
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
+
+  const { profile } = useAuth()
+  const contractorId = profile?.id
+  const contractorName = profile?.name || "Contractor"
+  const contractorFirm = profile?.firmName
 
   React.useEffect(() => {
     const savedPump = sessionStorage.getItem('selected_pump')
@@ -24,11 +30,20 @@ export function FuelPayment() {
     } else {
       navigate("/contractor/scan-pump")
     }
-  }, [])
 
-  const handlePayment = () => {
-    const amtNum = parseFloat(amount)
-    
+    if (contractorId) {
+      const unsub = onSnapshot(doc(db, "contractors", contractorId), (docSnap) => {
+        if (docSnap.exists()) {
+          setBalance(docSnap.data().walletBalance || 0)
+        }
+      })
+      return () => unsub()
+    }
+  }, [contractorId, navigate])
+
+  const amtNum = parseFloat(amount) || 0
+
+  const handlePayment = async () => {
     if (!amount || amtNum <= 0) {
       toast.error("Please enter a valid amount")
       return
@@ -44,25 +59,89 @@ export function FuelPayment() {
       return
     }
 
-    if (pin !== mockContractor.pin) {
-      toast.error("Invalid PIN")
+    if (!profile?.walletPIN) {
+      toast.error("Transaction PIN not set. Please set it in Settings.")
       return
     }
 
-    // Process Payment
-    const newBalance = balance - amtNum
-    setWalletBalance(newBalance)
-    
-    const txn = generateTransaction(
-      "Fuel Payment",
-      pump.pumpName,
-      amtNum,
-      "debit",
-      { pumpId: pump.pumpId }
-    )
-    addTransaction(txn)
+    if (pin !== profile.walletPIN) {
+      toast.error("Invalid Transaction PIN")
+      return
+    }
 
-    navigate(`/contractor/payment-success/${txn.transactionId}`, { state: { txn, pump } })
+    if (!contractorId) return
+
+    setIsSubmitting(true)
+    try {
+      await runTransaction(db, async (transaction) => {
+        const contractorRef = doc(db, "contractors", contractorId)
+        const pumpRef = doc(db, "merchant", pump.pumpId)
+        
+        const cDoc = await transaction.get(contractorRef)
+        const pDoc = await transaction.get(pumpRef)
+
+        if (!cDoc.exists()) throw new Error("Contractor profile not found")
+        if (!pDoc.exists()) throw new Error("Petrol Pump profile not found")
+
+        const currentCBalance = cDoc.data().walletBalance || 0
+        const currentPBalance = pDoc.data().walletBalance || 0
+
+        if (currentCBalance < amtNum) throw new Error("Insufficient Balance (Transaction aborted)")
+
+        const newCBalance = currentCBalance - amtNum
+        const newPBalance = currentPBalance + amtNum
+
+        // 1. Deduct from Contractor
+        transaction.update(contractorRef, { 
+          walletBalance: newCBalance,
+          lastPaymentAt: serverTimestamp()
+        })
+        
+        // 2. Add to Pump
+        transaction.update(pumpRef, { 
+          walletBalance: newPBalance,
+          lastReceiptAt: serverTimestamp()
+        })
+
+        // 3. Log Detailed History
+        const historyRef = doc(collection(db, "wallet_history"))
+        transaction.set(historyRef, {
+          type: 'payment',
+          status: 'completed',
+          sourceId: contractorId,
+          sourceName: contractorFirm || contractorName,
+          destinationId: pump.pumpId,
+          destinationName: pump.pumpName,
+          amount: amtNum,
+          timestamp: serverTimestamp(),
+          note: `Fuel payment at ${pump.pumpName}`,
+          metadata: {
+            prevBalanceSource: currentCBalance,
+            newBalanceSource: newCBalance,
+            prevBalanceDest: currentPBalance,
+            newBalanceDest: newPBalance,
+            sourceType: 'contractor',
+            destType: 'petrol_pump'
+          }
+        })
+      })
+
+      // We still use local routing for the success screen
+      const txn = {
+        transactionId: Date.now().toString(),
+        type: "Fuel Payment",
+        amount: amtNum,
+        direction: "debit",
+        source: pump.pumpName,
+        status: "Success",
+        createdAt: new Date().toLocaleDateString()
+      }
+      navigate(`/contractor/payment-success/${txn.transactionId}`, { state: { txn, pump } })
+    } catch (error: any) {
+      toast.error("Payment failed: " + error.message)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   if (!pump) return null
@@ -71,12 +150,12 @@ export function FuelPayment() {
     <div className="p-6 space-y-8 animate-in slide-in-from-right-4 duration-300">
       <div className="flex items-center space-x-4">
         <button onClick={() => navigate(-1)} className="p-2 bg-white rounded-full shadow-sm border border-slate-100">
-          <ChevronLeft className="h-6 w-6 text-slate-900" />
+          <ChevronLeft className="h-6 w-6 text-navy" />
         </button>
-        <h1 className="text-xl font-black text-slate-900">Fuel Payment</h1>
+        <h1 className="text-xl font-black text-navy">Fuel Payment</h1>
       </div>
 
-      <Card className="border-none shadow-xl bg-blue-600 rounded-[32px] text-white">
+      <Card className="border-none shadow-xl bg-brand rounded-[32px] text-white">
         <CardContent className="p-6 flex items-center space-x-4">
           <div className="h-14 w-14 bg-white/20 rounded-2xl flex items-center justify-center">
             <Fuel className="h-8 w-8" />
@@ -95,7 +174,7 @@ export function FuelPayment() {
             <Wallet className="h-4 w-4" />
             <span className="text-xs font-bold uppercase tracking-widest">Available Balance</span>
           </div>
-          <span className="text-sm font-black text-slate-900">{formatCurrency(balance)}</span>
+          <span className="text-sm font-black text-navy">{formatCurrency(balance)}</span>
         </div>
 
         <div className="space-y-4">
@@ -105,7 +184,7 @@ export function FuelPayment() {
               <Input 
                 type="tel"
                 placeholder="0.00"
-                className="h-16 text-3xl font-black bg-slate-50 border-slate-100 rounded-2xl px-6"
+                className="h-16 text-3xl font-black bg-slate-50 border-transparent focus-visible:bg-white focus-visible:ring-brand/20 rounded-2xl px-6"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value.replace(/\D/g, ''))}
               />
@@ -120,7 +199,7 @@ export function FuelPayment() {
                 type="password"
                 placeholder="••••"
                 maxLength={4}
-                className="h-16 text-3xl font-black bg-slate-50 border-slate-100 rounded-2xl px-6 text-center tracking-[0.5em]"
+                className="h-16 text-3xl font-black bg-slate-50 border-transparent focus-visible:bg-white focus-visible:ring-brand/20 rounded-2xl px-6 text-center tracking-[0.5em]"
                 value={pin}
                 onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
               />
@@ -131,11 +210,28 @@ export function FuelPayment() {
           </div>
         </div>
 
+        {amtNum > 0 && (
+          <p className="text-center text-slate-400 text-[10px] font-bold uppercase tracking-tight">
+            Balance After Payment: <span className={amtNum > balance ? "text-red-500" : "text-navy"}>{formatCurrency(balance - amtNum)}</span>
+          </p>
+        )}
+
         <Button 
           onClick={handlePayment}
-          className="w-full h-16 bg-indigo-600 hover:bg-indigo-700 text-lg font-black rounded-[24px] shadow-xl shadow-indigo-100 mt-4"
+          disabled={isSubmitting || amtNum > balance || !amount}
+          className={`w-full h-16 text-lg font-black rounded-[24px] shadow-xl mt-4 text-white transition-all ${
+            amtNum > balance 
+              ? "bg-slate-200 text-slate-400 shadow-none cursor-not-allowed" 
+              : "bg-brand hover:bg-brand-hover shadow-brand/20"
+          }`}
         >
-          Pay Now
+          {isSubmitting ? (
+            <Loader2 className="h-6 w-6 animate-spin" />
+          ) : amtNum > balance ? (
+            "Insufficient Balance"
+          ) : (
+            "Pay Now"
+          )}
         </Button>
 
         <div className="flex items-start space-x-3 p-4 bg-slate-100 rounded-2xl">

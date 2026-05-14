@@ -1,49 +1,91 @@
 import * as React from "react"
 import { useNavigate } from "react-router-dom"
-import { ChevronLeft, Info, HelpCircle } from "lucide-react"
+import { ChevronLeft, Info, HelpCircle, Loader2 } from "lucide-react"
 import { ScannerBox } from "@/components/contractor/ScannerBox"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { parseCouponQR } from "@/lib/contractor/qrParser"
-import { getWalletBalance, setWalletBalance, addTransaction, isCouponScanned, markCouponAsScanned } from "@/lib/contractor/walletStorage"
-import { generateTransaction } from "@/lib/contractor/transactionGenerator"
 import { toast } from "sonner"
 import { mockCoupon } from "@/data/contractor/mockCoupon"
+import { db } from "@/lib/firebase"
+import { doc, runTransaction, collection, serverTimestamp } from "firebase/firestore"
 
 export function ScanCoupon() {
   const navigate = useNavigate()
   const [manualData, setManualData] = React.useState("")
+  const [isProcessing, setIsProcessing] = React.useState(false)
 
-  const handleScan = (data: string) => {
-    const coupon = parseCouponQR(data)
+  const contractorId = localStorage.getItem("contractorId")
+  const contractorName = localStorage.getItem("contractorName") || "Contractor"
+  const contractorFirm = localStorage.getItem("contractorFirm")
+
+  const handleScan = async (data: string) => {
+    const couponData = parseCouponQR(data)
     
-    if (!coupon) {
+    if (!couponData) {
       toast.error("Invalid QR Code data")
       return
     }
 
-    if (isCouponScanned(coupon.couponId)) {
-      toast.error("This coupon is already used")
+    if (!contractorId) {
+      toast.error("Session expired. Please login again.")
+      navigate("/contractor/login")
       return
     }
 
-    // Process Reward
-    const currentBalance = getWalletBalance()
-    const newBalance = currentBalance + coupon.rewardValue
-    
-    setWalletBalance(newBalance)
-    markCouponAsScanned(coupon.couponId)
-    
-    const txn = generateTransaction(
-      "Reward Earned",
-      "Dealer Coupon",
-      coupon.rewardValue,
-      "credit",
-      { couponId: coupon.couponId }
-    )
-    addTransaction(txn)
+    setIsProcessing(true)
+    try {
+      await runTransaction(db, async (transaction) => {
+        const couponRef = doc(db, "coupons", couponData.couponId)
+        const contractorRef = doc(db, "dealers", contractorId) // We store contractors in 'dealers' collection for simplicity or 'contractors' if you prefer. 
+        // Wait, looking at ContractorLogin.tsx, it checks 'dealers' collection for contractors? Let me check.
+        
+        const cSnap = await transaction.get(couponRef)
+        const dSnap = await transaction.get(contractorRef)
 
-    navigate(`/contractor/reward-success/${coupon.couponId}`, { state: { coupon } })
+        if (!cSnap.exists()) throw new Error("Invalid Coupon Code")
+        if (!dSnap.exists()) throw new Error("Contractor record not found")
+
+        const coupon = cSnap.data()
+        if (coupon.status !== "Active") throw new Error("This coupon is already claimed")
+
+        // 1. Mark Coupon as Claimed
+        transaction.update(couponRef, {
+          status: "Claimed",
+          claimedBy: contractorId,
+          claimedAt: serverTimestamp()
+        })
+
+        // 2. Add Reward to Wallet
+        const currentBalance = dSnap.data().walletBalance || 0
+        transaction.update(contractorRef, {
+          walletBalance: currentBalance + coupon.rewardValue
+        })
+
+        // 3. Log History
+        const historyRef = doc(collection(db, "wallet_history"))
+        transaction.set(historyRef, {
+          type: 'reward',
+          status: 'completed',
+          sourceId: coupon.dealerId,
+          sourceName: "Dealer Reward",
+          destinationId: contractorId,
+          destinationName: contractorFirm || contractorName,
+          amount: coupon.rewardValue,
+          timestamp: serverTimestamp(),
+          note: `Reward for ${coupon.weightKg} Kg purchase`,
+          couponId: coupon.couponId
+        })
+      })
+
+      toast.success(`Reward of ₹${couponData.rewardValue} added to wallet!`)
+      navigate(`/contractor/reward-success/${couponData.couponId}`, { state: { coupon: couponData } })
+    } catch (error: any) {
+      console.error("Claim Error:", error)
+      toast.error(error.message || "Failed to claim reward")
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   const useMockCoupon = () => {
@@ -59,11 +101,22 @@ export function ScanCoupon() {
         <h1 className="text-xl font-black text-slate-900">Scan Coupon</h1>
       </div>
 
-      <ScannerBox 
-        title="डीलरचा कूपन QR स्कॅन करा"
-        hint="Scan dealer coupon QR code to earn reward"
-        onScan={handleScan}
-      />
+      <div className="relative">
+        {isProcessing && (
+          <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-sm flex items-center justify-center rounded-[32px]">
+            <div className="text-center space-y-4">
+              <Loader2 className="h-12 w-12 animate-spin text-brand mx-auto" />
+              <p className="text-sm font-black text-navy">Processing Reward...</p>
+            </div>
+          </div>
+        )}
+        
+        <ScannerBox 
+          title="डीलरचा कूपन QR स्कॅन करा"
+          hint="Scan dealer coupon QR code to earn reward"
+          onScan={handleScan}
+        />
+      </div>
 
       <div className="space-y-6">
         <div className="relative">
@@ -80,6 +133,7 @@ export function ScanCoupon() {
             variant="outline" 
             className="w-full h-14 rounded-2xl border-2 border-slate-200 font-bold bg-white"
             onClick={useMockCoupon}
+            disabled={isProcessing}
           >
             <HelpCircle className="h-5 w-5 mr-2 text-blue-600" />
             Use Mock Coupon
@@ -93,10 +147,12 @@ export function ScanCoupon() {
                 value={manualData}
                 onChange={(e) => setManualData(e.target.value)}
                 className="h-12 bg-white border-slate-100 rounded-xl text-xs font-mono"
+                disabled={isProcessing}
               />
               <Button 
                 className="h-12 bg-slate-900 text-white rounded-xl font-bold px-4"
                 onClick={() => handleScan(manualData)}
+                disabled={isProcessing}
               >
                 Scan
               </Button>
